@@ -1,0 +1,11 @@
+[build]
+builder = "DOCKERFILE"
+dockerfilePath = "Dockerfile"
+
+[deploy]
+startCommand = "" # Uses Dockerfile CMD
+healthcheckPath = "/"
+healthcheckTimeout = 100
+
+[volumes.data]
+mountPath = "/data"

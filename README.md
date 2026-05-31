@@ -261,6 +261,7 @@ Core components:
 | connect Claude Desktop or Cursor | [`docs/mcp-clients.md`](./docs/mcp-clients.md) |
 | run the curl-first examples | [`examples/README.md`](./examples/README.md) |
 | deploy on a trusted host | [`docs/deployment.md`](./docs/deployment.md) |
+| deploy on Railway | [`docs/deploy-railway.md`](./docs/deploy-railway.md) |
 | review production constraints | [`docs/production-hardening.md`](./docs/production-hardening.md) |
 | run the convergence harness | [`docs/convergence-harness.md`](./docs/convergence-harness.md) |
 | inspect release history | [`CHANGELOG.md`](./CHANGELOG.md) |
