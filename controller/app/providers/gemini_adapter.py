@@ -96,7 +96,7 @@ class GeminiAdapter(BaseProviderAdapter):
         # Define fallback sequence
         models_to_try = [model, model]  # Try original model, then retry original model
         if "gemma-4-31b-it" in model:
-            models_to_try.append("gemma-4-26b-a4b-it")
+            models_to_try.extend(["gemma-4-26b-a4b-it", "gemini-1.5-flash"])
 
         response = None
         last_error = None
