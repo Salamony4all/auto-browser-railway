@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 from typing import Any
 
 from ..models import BrowserActionDecision
@@ -91,14 +92,37 @@ class GeminiAdapter(BaseProviderAdapter):
                 "responseJsonSchema": self.action_schema,
             },
         }
-        response = await self._post_json(
-            url=f"{self.settings.gemini_base_url.rstrip('/')}/models/{model}:generateContent",
-            headers={
-                "x-goog-api-key": self.settings.gemini_api_key or "",
-                "content-type": "application/json",
-            },
-            payload=payload,
-        )
+
+        # Define fallback sequence
+        models_to_try = [model, model]  # Try original model, then retry original model
+        if "gemma-4-31b-it" in model:
+            models_to_try.append("gemma-4-26b-a4b-it")
+
+        response = None
+        last_error = None
+        used_model = model
+
+        for attempt_idx, attempt_model in enumerate(models_to_try):
+            used_model = attempt_model
+            try:
+                response = await self._post_json(
+                    url=f"{self.settings.gemini_base_url.rstrip('/')}/models/{attempt_model}:generateContent",
+                    headers={
+                        "x-goog-api-key": self.settings.gemini_api_key or "",
+                        "content-type": "application/json",
+                    },
+                    payload=payload,
+                )
+                break  # Success
+            except Exception as e:
+                last_error = e
+                # Wait briefly before retrying
+                if attempt_idx < len(models_to_try) - 1:
+                    await asyncio.sleep(1)
+
+        if response is None:
+            raise RuntimeError(f"Gemini failed after {len(models_to_try)} attempts. Last error: {last_error}")
+
         candidates = response.get("candidates") or []
         if not candidates:
             raise RuntimeError("Gemini returned no candidates")
@@ -110,7 +134,7 @@ class GeminiAdapter(BaseProviderAdapter):
         usage = response.get("usageMetadata")
         return ProviderDecision(
             provider=self.provider,
-            model=model,
+            model=used_model,
             decision=decision,
             usage=usage,
             raw_text=text,
