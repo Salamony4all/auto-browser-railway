@@ -94,13 +94,18 @@ class GeminiAdapter(BaseProviderAdapter):
         }
 
         # Define fallback sequence
-        models_to_try = [model, model]  # Try original model, then retry original model
+        models_to_try = [model]
         if "gemma-4-31b-it" in model:
-            models_to_try.extend(["gemma-4-26b-a4b-it", "gemini-1.5-flash"])
+            models_to_try.append("gemma-4-26b-a4b-it")
+        else:
+            models_to_try.append(model) # Retry once
 
         response = None
         last_error = None
         used_model = model
+        decision = None
+        usage = None
+        raw_text = None
 
         for attempt_idx, attempt_model in enumerate(models_to_try):
             used_model = attempt_model
@@ -113,6 +118,45 @@ class GeminiAdapter(BaseProviderAdapter):
                     },
                     payload=payload,
                 )
+                
+                candidates = response.get("candidates") or []
+                if not candidates:
+                    raise RuntimeError("Gemini returned no candidates")
+                parts = candidates[0].get("content", {}).get("parts", [])
+                text = next((part.get("text") for part in parts if part.get("text")), None)
+                if not text:
+                    raise RuntimeError("Gemini did not return structured JSON text")
+                
+                # Parse and repair
+                import json
+                from pydantic import ValidationError
+                
+                try:
+                    decision = BrowserActionDecision.model_validate_json(text)
+                except ValidationError as ve:
+                    # Attempt Repair for Gemma hallucinated enums
+                    try:
+                        data = json.loads(text)
+                        valid_actions = ["click", "type", "scroll", "wait", "takeover", "done"]
+                        action = data.get("action", "")
+                        
+                        if action not in valid_actions:
+                            action_lower = str(action).lower()
+                            repaired_action = "wait" # default fallback
+                            for va in valid_actions:
+                                if va in action_lower:
+                                    repaired_action = va
+                                    break
+                            data["action"] = repaired_action
+                            if not data.get("reason"):
+                                data["reason"] = str(action) if action else "Repaired invalid action"
+                        
+                        decision = BrowserActionDecision.model_validate(data)
+                    except Exception as repair_e:
+                        raise RuntimeError(f"JSON validation failed and could not be repaired: {ve}") from repair_e
+                        
+                usage = response.get("usageMetadata")
+                raw_text = text
                 break  # Success
             except Exception as e:
                 last_error = e
@@ -120,24 +164,15 @@ class GeminiAdapter(BaseProviderAdapter):
                 if attempt_idx < len(models_to_try) - 1:
                     await asyncio.sleep(1)
 
-        if response is None:
+        if decision is None:
             raise RuntimeError(f"Gemini failed after {len(models_to_try)} attempts. Last error: {last_error}")
 
-        candidates = response.get("candidates") or []
-        if not candidates:
-            raise RuntimeError("Gemini returned no candidates")
-        parts = candidates[0].get("content", {}).get("parts", [])
-        text = next((part.get("text") for part in parts if part.get("text")), None)
-        if not text:
-            raise RuntimeError("Gemini did not return structured JSON text")
-        decision = BrowserActionDecision.model_validate_json(text)
-        usage = response.get("usageMetadata")
         return ProviderDecision(
             provider=self.provider,
             model=used_model,
             decision=decision,
             usage=usage,
-            raw_text=text,
+            raw_text=raw_text,
         )
 
     async def _decide_via_cli(
