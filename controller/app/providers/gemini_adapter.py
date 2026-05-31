@@ -1,7 +1,10 @@
 from __future__ import annotations
 
 import asyncio
+import json
 from typing import Any
+
+from pydantic import ValidationError
 
 from ..models import BrowserActionDecision
 from .base import BaseProviderAdapter, ProviderDecision
@@ -126,10 +129,6 @@ class GeminiAdapter(BaseProviderAdapter):
                 text = next((part.get("text") for part in parts if part.get("text")), None)
                 if not text:
                     raise RuntimeError("Gemini did not return structured JSON text")
-                
-                # Parse and repair
-                import json
-                from pydantic import ValidationError
                 
                 try:
                     decision = BrowserActionDecision.model_validate_json(text)
