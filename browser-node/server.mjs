@@ -14,6 +14,7 @@ const browserServer = await chromium.launchServer({
   chromiumSandbox: false,
   host,
   port,
+  wsPath: "playwright",
   downloadsPath: "/data/downloads",
   args: [
     `--window-size=${width},${height}`,
