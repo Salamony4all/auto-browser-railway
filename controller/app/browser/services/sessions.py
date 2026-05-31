@@ -378,6 +378,17 @@ class BrowserSessionService:
         status: SessionStatus = "active",
         live: bool = True,
     ) -> dict[str, Any]:
+        try:
+            title = await session.page.title()
+            current_url = session.page.url
+        except Exception:
+            title = "Browser Disconnected"
+            status = "interrupted"
+            try:
+                current_url = session.page.url
+            except Exception:
+                current_url = "unknown"
+
         return {
             "id": session.id,
             "name": session.name,
@@ -385,8 +396,8 @@ class BrowserSessionService:
             "updated_at": datetime.now(UTC).isoformat().replace("+00:00", "Z"),
             "status": status,
             "live": live,
-            "current_url": session.page.url,
-            "title": await session.page.title(),
+            "current_url": current_url,
+            "title": title,
             "artifact_dir": str(session.artifact_dir),
             "takeover_url": self.manager._current_takeover_url(session),
             "remote_access": self.manager._session_remote_access_info(session),
