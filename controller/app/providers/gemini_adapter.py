@@ -136,7 +136,7 @@ class GeminiAdapter(BaseProviderAdapter):
                     # Attempt Repair for Gemma hallucinated enums
                     try:
                         data = json.loads(text)
-                        valid_actions = ["click", "type", "scroll", "wait", "takeover", "done"]
+                        valid_actions = ["navigate", "click", "hover", "select_option", "type", "press", "scroll", "wait", "reload", "go_back", "go_forward", "upload", "request_human_takeover", "done"]
                         action = data.get("action", "")
                         
                         if action not in valid_actions:
