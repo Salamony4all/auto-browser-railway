@@ -218,7 +218,10 @@ class Settings(BaseSettings):
     claude_cli_path: str = Field("claude", alias="CLAUDE_CLI_PATH")
     claude_cli_model: str | None = Field(None, alias="CLAUDE_CLI_MODEL")
 
-    gemini_api_key: str | None = Field(None, alias="GEMINI_API_KEY")
+    gemini_api_key: str | None = Field(
+        None,
+        validation_alias=AliasChoices("GEMINI_API_KEY", "GOOGLE_API_KEY"),
+    )
     gemini_base_url: str = Field(
         "https://generativelanguage.googleapis.com/v1beta",
         alias="GEMINI_BASE_URL",
