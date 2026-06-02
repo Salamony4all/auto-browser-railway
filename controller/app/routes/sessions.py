@@ -280,6 +280,18 @@ def create_sessions_router(*, manager: Any) -> APIRouter:
         except Exception:
             raise internal_error(logger, "wait failed for session %s", session_id) from None
 
+    @router.post("/sessions/{session_id}/speed-filter")
+    async def speed_filter(session_id: str, payload: dict[str, Any] | None = None) -> dict[str, Any]:
+        try:
+            await manager.get_session(session_id)
+        except KeyError:
+            raise HTTPException(status_code=404, detail="Unknown session") from None
+
+        return {
+            "success": True,
+            "message": "Speed filter endpoint accepted. No action taken.",
+        }
+
     @router.post("/sessions/{session_id}/actions/reload")
     async def reload(session_id: str) -> dict[str, Any]:
         try:
@@ -363,8 +375,6 @@ def create_sessions_router(*, manager: Any) -> APIRouter:
                 raw_cdp_ws_url = resp.text.strip()
                 if not raw_cdp_ws_url:
                     raise Exception("Empty CDP URL returned")
-                # raw_cdp_ws_url is usually ws://127.0.0.1:9222/... or 0.0.0.0:9222/...
-                # We MUST connect to the browser-node internal hostname, not localhost.
                 parsed_cdp = urllib.parse.urlparse(raw_cdp_ws_url)
                 cdp_ws_url = parsed_cdp._replace(netloc=f"{hostname}:{parsed_cdp.port}").geturl()
         except Exception as e:
@@ -372,11 +382,49 @@ def create_sessions_router(*, manager: Any) -> APIRouter:
             await websocket.close(code=1011, reason="Failed to get CDP debugger URL")
             return
 
+        forward_headers: dict[str, str] = {}
+        user_agent = None
+        subprotocols = None
+        browser_name = None
+        for k, v in websocket.headers.items():
+            k_lower = k.lower()
+            if k_lower == "user-agent":
+                user_agent = v
+            elif k_lower == "x-playwright-browser":
+                browser_name = v
+                forward_headers[k] = v
+            elif k_lower == "sec-websocket-protocol":
+                subprotocols = [p.strip() for p in v.split(",")]
+            elif k_lower not in (
+                "host",
+                "connection",
+                "upgrade",
+                "sec-websocket-key",
+                "sec-websocket-version",
+                "sec-websocket-extensions",
+            ):
+                forward_headers[k] = v
+
+        if browser_name and f"browserName={browser_name}" not in cdp_ws_url:
+            sep = "&" if "?" in cdp_ws_url else "?"
+            cdp_ws_url = f"{cdp_ws_url}{sep}browserName={browser_name}"
+
         session.gateway_attached = True
         logger.info("Session %s CDP gateway attached. Proxying to %s", session_id, cdp_ws_url)
 
-        ws_kwargs = {"ping_interval": 20, "ping_timeout": 10, "max_size": 2**24, "additional_headers": {"Host": "localhost"}}
+        ws_kwargs = {
+            "ping_interval": 20,
+            "ping_timeout": 10,
+            "max_size": 2**24,
+            "user_agent_header": user_agent,
+            "subprotocols": subprotocols,
+        }
         import websockets
+        ws_version = getattr(websockets, "__version__", "0")
+        if int(ws_version.split(".")[0]) >= 14:
+            ws_kwargs["additional_headers"] = forward_headers
+        else:
+            ws_kwargs["extra_headers"] = forward_headers
 
         try:
             async with websockets.connect(cdp_ws_url, **ws_kwargs) as backend_ws:
