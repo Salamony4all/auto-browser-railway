@@ -44,19 +44,7 @@ await writeFile(tmpFile, advertisedEndpoint, "utf-8");
 await rename(tmpFile, endpointFile);
 console.log(`Playwright Browser Server running on ${browserServer.wsEndpoint()}`);
 
-try {
-  console.log("Creating default context and page for VNC human-in-the-loop...");
-  const localBrowser = await chromium.connect(browserServer.wsEndpoint());
-  const context = await localBrowser.newContext({ 
-    viewport: null, 
-    ignoreHTTPSErrors: true 
-  });
-  const page = await context.newPage();
-  // We don't await goto so it doesn't block startup
-  page.goto("https://etendering.tenderboard.gov.om/product/publicDash?CTRL_STRDIRECTION=LTR").catch(e => console.error(e));
-} catch (err) {
-  console.error("Failed to create default page:", err);
-}
+// The default page will be created by the controller via start_url
 
 import http from 'http';
 import net from 'net';
