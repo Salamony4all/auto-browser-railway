@@ -371,7 +371,7 @@ def create_sessions_router(*, manager: Any) -> APIRouter:
         session.gateway_attached = True
         logger.info("Session %s CDP gateway attached. Proxying to %s", session_id, cdp_ws_url)
 
-        ws_kwargs = {}
+        ws_kwargs = {"ping_interval": None, "max_size": 2**24, "extra_headers": {"Host": "localhost"}}
         import websockets
 
         try:
