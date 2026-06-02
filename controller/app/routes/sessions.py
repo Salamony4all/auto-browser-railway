@@ -361,25 +361,42 @@ def create_sessions_router(*, manager: Any) -> APIRouter:
         forward_headers = {}
         user_agent = None
         subprotocols = None
+        browser_name = None
         for k, v in websocket.headers.items():
             k_lower = k.lower()
             if k_lower == 'user-agent':
                 user_agent = v
+            elif k_lower == 'x-playwright-browser':
+                browser_name = v
+                forward_headers[k] = v
             elif k_lower == 'sec-websocket-protocol':
                 subprotocols = [p.strip() for p in v.split(',')]
             elif k_lower not in ("host", "connection", "upgrade", "sec-websocket-key", "sec-websocket-version", "sec-websocket-extensions"):
                 forward_headers[k] = v
 
+        # Force browserName into the query string as a fallback for header-stripping environments
+        if browser_name and f"browserName={browser_name}" not in cdp_ws_url:
+            sep = "&" if "?" in cdp_ws_url else "?"
+            cdp_ws_url = f"{cdp_ws_url}{sep}browserName={browser_name}"
+
         session.gateway_attached = True
         logger.info("Session %s gateway attached. Proxying to %s", session_id, cdp_ws_url)
 
+        # Handle version-specific kwargs for websockets library
+        ws_kwargs = {
+            "user_agent_header": user_agent,
+            "subprotocols": subprotocols
+        }
+        
+        import websockets
+        ws_version = getattr(websockets, "__version__", "0")
+        if int(ws_version.split(".")[0]) >= 14:
+            ws_kwargs["additional_headers"] = forward_headers
+        else:
+            ws_kwargs["extra_headers"] = forward_headers
+
         try:
-            async with websockets.connect(
-                cdp_ws_url, 
-                additional_headers=forward_headers,
-                user_agent_header=user_agent,
-                subprotocols=subprotocols
-            ) as backend_ws:
+            async with websockets.connect(cdp_ws_url, **ws_kwargs) as backend_ws:
                 async def client_to_backend():
                     try:
                         while True:
