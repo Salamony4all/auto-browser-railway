@@ -43,6 +43,21 @@ await writeFile(tmpFile, advertisedEndpoint, "utf-8");
 await rename(tmpFile, endpointFile);
 console.log(`wrote ${endpointFile}: ${advertisedEndpoint}`);
 
+try {
+  const cdpRes = await fetch("http://127.0.0.1:9222/json/version");
+  const cdpData = await cdpRes.json();
+  let cdpUrl = cdpData.webSocketDebuggerUrl;
+  const cdpFile = "/data/profile/cdp-endpoint.txt";
+  const cdpTmp = `${cdpFile}.tmp`;
+  // Replace 127.0.0.1 with advertisedHost so the controller can reach it via Railway internal network
+  cdpUrl = cdpUrl.replace("127.0.0.1", advertisedHost).replace("localhost", advertisedHost);
+  await writeFile(cdpTmp, cdpUrl, "utf-8");
+  await rename(cdpTmp, cdpFile);
+  console.log(`wrote ${cdpFile}: ${cdpUrl}`);
+} catch (err) {
+  console.error("Failed to write cdp-endpoint.txt:", err);
+}
+
 for (const signal of ["SIGINT", "SIGTERM"]) {
   process.on(signal, async () => {
     await browserServer.close();
