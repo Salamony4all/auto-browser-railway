@@ -351,26 +351,20 @@ def create_sessions_router(*, manager: Any) -> APIRouter:
             return
 
         import urllib.parse
-        import os
-        import asyncio
+        import httpx
 
         parsed = urllib.parse.urlparse(base_ws_url)
         hostname = parsed.hostname
 
         try:
-            cdp_file = "/data/profile/cdp-endpoint.txt"
-            if not os.path.exists(cdp_file):
-                logger.error("cdp-endpoint.txt not found. Cannot attach CDP proxy.")
-                await websocket.close(code=1011, reason="CDP endpoint file missing")
-                return
-            
-            def read_cdp():
-                with open(cdp_file, "r") as f:
-                    return f.read().strip()
-                    
-            cdp_ws_url = await asyncio.to_thread(read_cdp)
+            async with httpx.AsyncClient() as client:
+                resp = await client.get(f"http://{hostname}:9224/cdp-url", timeout=10.0)
+                resp.raise_for_status()
+                cdp_ws_url = resp.text.strip()
+                if not cdp_ws_url:
+                    raise Exception("Empty CDP URL returned")
         except Exception as e:
-            logger.error("Failed to read CDP URL: %s", e)
+            logger.error("Failed to read CDP URL from port 9224: %s", e)
             await websocket.close(code=1011, reason="Failed to get CDP debugger URL")
             return
 
