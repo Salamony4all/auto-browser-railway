@@ -29,6 +29,7 @@ const browserServer = await chromium.launchServer({
     "--disable-notifications",
     "--remote-debugging-port=9222",
     "--remote-debugging-address=0.0.0.0",
+    "--remote-allow-origins=*",
   ],
 });
 
@@ -41,7 +42,21 @@ await mkdir(dirname(endpointFile), { recursive: true });
 const tmpFile = `${endpointFile}.tmp`;
 await writeFile(tmpFile, advertisedEndpoint, "utf-8");
 await rename(tmpFile, endpointFile);
-console.log(`wrote ${endpointFile}: ${advertisedEndpoint}`);
+console.log(`Playwright Browser Server running on ${browserServer.wsEndpoint()}`);
+
+try {
+  console.log("Creating default context and page for VNC human-in-the-loop...");
+  const localBrowser = await chromium.connect(browserServer.wsEndpoint());
+  const context = await localBrowser.newContext({ 
+    viewport: null, 
+    ignoreHTTPSErrors: true 
+  });
+  const page = await context.newPage();
+  // We don't await goto so it doesn't block startup
+  page.goto("https://tenderboard.gov.bh").catch(e => console.error(e));
+} catch (err) {
+  console.error("Failed to create default page:", err);
+}
 
 import http from 'http';
 
