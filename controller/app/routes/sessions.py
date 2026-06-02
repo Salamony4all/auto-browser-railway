@@ -353,11 +353,21 @@ def create_sessions_router(*, manager: Any) -> APIRouter:
                 await websocket.close(code=1011, reason="Failed to resolve browser ws endpoint")
                 return
 
+        query_string = websocket.scope.get("query_string", b"").decode("utf-8")
+        if query_string:
+            sep = "&" if "?" in cdp_ws_url else "?"
+            cdp_ws_url = f"{cdp_ws_url}{sep}{query_string}"
+
+        forward_headers = {}
+        for k, v in websocket.headers.items():
+            if k.lower() not in ("host", "connection", "upgrade", "sec-websocket-key", "sec-websocket-version", "sec-websocket-extensions"):
+                forward_headers[k] = v
+
         session.gateway_attached = True
         logger.info("Session %s gateway attached. Proxying to %s", session_id, cdp_ws_url)
 
         try:
-            async with websockets.connect(cdp_ws_url) as backend_ws:
+            async with websockets.connect(cdp_ws_url, extra_headers=forward_headers) as backend_ws:
                 async def client_to_backend():
                     try:
                         while True:
