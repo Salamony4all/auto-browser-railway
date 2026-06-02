@@ -371,24 +371,35 @@ def create_sessions_router(*, manager: Any) -> APIRouter:
                 async def client_to_backend():
                     try:
                         while True:
-                            data = await websocket.receive_text()
-                            await backend_ws.send(data)
-                    except WebSocketDisconnect:
-                        pass
+                            message = await websocket.receive()
+                            if message["type"] == "websocket.receive":
+                                if "text" in message and message["text"] is not None:
+                                    await backend_ws.send(message["text"])
+                                elif "bytes" in message and message["bytes"] is not None:
+                                    await backend_ws.send(message["bytes"])
+                            elif message["type"] == "websocket.disconnect":
+                                break
                     except Exception as e:
                         logger.error("Error client_to_backend: %s", e)
 
                 async def backend_to_client():
                     try:
                         async for message in backend_ws:
-                            await websocket.send_text(message)
+                            if isinstance(message, str):
+                                await websocket.send_text(message)
+                            else:
+                                await websocket.send_bytes(message)
                     except Exception as e:
                         logger.error("Error backend_to_client: %s", e)
 
-                await asyncio.gather(
-                    client_to_backend(),
-                    backend_to_client(),
+                client_task = asyncio.create_task(client_to_backend())
+                backend_task = asyncio.create_task(backend_to_client())
+                done, pending = await asyncio.wait(
+                    [client_task, backend_task],
+                    return_when=asyncio.FIRST_COMPLETED
                 )
+                for task in pending:
+                    task.cancel()
         except Exception as e:
             logger.error("WebSocket proxy error for session %s: %s", session_id, e)
         finally:
