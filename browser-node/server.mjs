@@ -53,7 +53,7 @@ try {
   });
   const page = await context.newPage();
   // We don't await goto so it doesn't block startup
-  page.goto("https://tenderboard.gov.bh").catch(e => console.error(e));
+  page.goto("https://etendering.tenderboard.gov.om/product/publicDash?CTRL_STRDIRECTION=LTR").catch(e => console.error(e));
 } catch (err) {
   console.error("Failed to create default page:", err);
 }
