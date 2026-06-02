@@ -328,6 +328,95 @@ def create_sessions_router(*, manager: Any) -> APIRouter:
         except RuntimeError:
             raise HTTPException(status_code=409, detail="Conflict") from None
 
+    @router.websocket("/sessions/{session_id}/cdp")
+    async def connect_raw_cdp_endpoint(websocket: WebSocket, session_id: str, token: str = ""):
+        await websocket.accept()
+        
+        expected_token = manager.settings.browser_gateway_token
+        if expected_token and token != expected_token:
+            await websocket.close(code=1008, reason="Invalid token")
+            return
+
+        try:
+            session = await manager.get_session(session_id)
+        except KeyError:
+            await websocket.close(code=1004, reason="Session not found")
+            return
+
+        try:
+            base_ws_url = await manager.runtime.resolve_browser_ws_endpoint()
+        except Exception as e:
+            logger.error("Failed to resolve browser ws endpoint: %s", e)
+            await websocket.close(code=1011, reason="Failed to resolve browser ws endpoint")
+            return
+
+        import urllib.parse
+        import httpx
+
+        parsed = urllib.parse.urlparse(base_ws_url)
+        hostname = parsed.hostname
+
+        try:
+            async with httpx.AsyncClient() as client:
+                resp = await client.get(f"http://{hostname}:9222/json/version", timeout=5.0)
+                resp.raise_for_status()
+                data = resp.json()
+                cdp_ws_url = data["webSocketDebuggerUrl"]
+        except Exception as e:
+            logger.error("Failed to get CDP debugger URL from %s: %s", hostname, e)
+            await websocket.close(code=1011, reason="Failed to get CDP debugger URL")
+            return
+
+        session.gateway_attached = True
+        logger.info("Session %s CDP gateway attached. Proxying to %s", session_id, cdp_ws_url)
+
+        ws_kwargs = {}
+        import websockets
+
+        try:
+            async with websockets.connect(cdp_ws_url, **ws_kwargs) as backend_ws:
+                async def client_to_backend():
+                    try:
+                        while True:
+                            message = await websocket.receive()
+                            if message["type"] == "websocket.receive":
+                                if "text" in message and message["text"] is not None:
+                                    await backend_ws.send(message["text"])
+                                elif "bytes" in message and message["bytes"] is not None:
+                                    await backend_ws.send(message["bytes"])
+                            elif message["type"] == "websocket.disconnect":
+                                break
+                    except Exception as e:
+                        logger.error("Error CDP client_to_backend: %s", e)
+
+                async def backend_to_client():
+                    try:
+                        async for message in backend_ws:
+                            if isinstance(message, str):
+                                await websocket.send_text(message)
+                            else:
+                                await websocket.send_bytes(message)
+                    except Exception as e:
+                        logger.error("Error CDP backend_to_client: %s", e)
+
+                client_task = asyncio.create_task(client_to_backend())
+                backend_task = asyncio.create_task(backend_to_client())
+                done, pending = await asyncio.wait(
+                    [client_task, backend_task],
+                    return_when=asyncio.FIRST_COMPLETED
+                )
+                for task in pending:
+                    task.cancel()
+        except Exception as e:
+            logger.error("CDP WebSocket proxy error for session %s: %s", session_id, e)
+        finally:
+            session.gateway_attached = False
+            logger.info("Session %s CDP gateway detached", session_id)
+            try:
+                await websocket.close(code=1000)
+            except Exception:
+                pass
+
     @router.websocket("/sessions/{session_id}/connect")
     async def connect_cdp(websocket: WebSocket, session_id: str, token: str = ""):
         await websocket.accept()

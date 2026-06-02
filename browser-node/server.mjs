@@ -27,6 +27,8 @@ const browserServer = await chromium.launchServer({
     "--no-default-browser-check",
     "--lang=en-US,en",
     "--disable-notifications",
+    "--remote-debugging-port=9222",
+    "--remote-debugging-address=0.0.0.0",
   ],
 });
 
