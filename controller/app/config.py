@@ -264,6 +264,7 @@ class Settings(BaseSettings):
     sse_keepalive_seconds: float = Field(15.0, alias="SSE_KEEPALIVE_SECONDS")
 
     # Proxy (session-level override supported in CreateSessionRequest)
+    browser_gateway_token: str | None = Field(None, alias="BROWSER_GATEWAY_TOKEN")
     default_proxy_server: str | None = Field(None, alias="DEFAULT_PROXY_SERVER")
     default_proxy_username: str | None = Field(None, alias="DEFAULT_PROXY_USERNAME")
     default_proxy_password: str | None = Field(None, alias="DEFAULT_PROXY_PASSWORD")

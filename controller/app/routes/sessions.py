@@ -3,7 +3,9 @@ from __future__ import annotations
 import logging
 from typing import Any
 
-from fastapi import APIRouter, HTTPException
+import asyncio
+from fastapi import APIRouter, HTTPException, WebSocket, WebSocketDisconnect
+import websockets
 
 from ..approvals import ApprovalRequiredError
 from ..models import (
@@ -325,5 +327,66 @@ def create_sessions_router(*, manager: Any) -> APIRouter:
             return await manager.fork_session(session_id, name=name, start_url=start_url)
         except RuntimeError:
             raise HTTPException(status_code=409, detail="Conflict") from None
+
+    @router.websocket("/sessions/{session_id}/connect")
+    async def connect_cdp(websocket: WebSocket, session_id: str, token: str = ""):
+        await websocket.accept()
+        
+        expected_token = manager.settings.browser_gateway_token
+        if expected_token and token != expected_token:
+            await websocket.close(code=1008, reason="Invalid token")
+            return
+
+        try:
+            session = await manager.get_session(session_id)
+        except KeyError:
+            await websocket.close(code=1004, reason="Session not found")
+            return
+
+        if session.runtime and session.runtime.ws_endpoint:
+            cdp_ws_url = session.runtime.ws_endpoint
+        else:
+            try:
+                cdp_ws_url = await manager.runtime.resolve_browser_ws_endpoint()
+            except Exception as e:
+                logger.error("Failed to resolve browser ws endpoint: %s", e)
+                await websocket.close(code=1011, reason="Failed to resolve browser ws endpoint")
+                return
+
+        session.gateway_attached = True
+        logger.info("Session %s gateway attached. Proxying to %s", session_id, cdp_ws_url)
+
+        try:
+            async with websockets.connect(cdp_ws_url) as backend_ws:
+                async def client_to_backend():
+                    try:
+                        while True:
+                            data = await websocket.receive_text()
+                            await backend_ws.send(data)
+                    except WebSocketDisconnect:
+                        pass
+                    except Exception as e:
+                        logger.error("Error client_to_backend: %s", e)
+
+                async def backend_to_client():
+                    try:
+                        async for message in backend_ws:
+                            await websocket.send_text(message)
+                    except Exception as e:
+                        logger.error("Error backend_to_client: %s", e)
+
+                await asyncio.gather(
+                    client_to_backend(),
+                    backend_to_client(),
+                )
+        except Exception as e:
+            logger.error("WebSocket proxy error for session %s: %s", session_id, e)
+        finally:
+            session.gateway_attached = False
+            logger.info("Session %s gateway detached", session_id)
+            try:
+                await websocket.close(code=1000)
+            except Exception:
+                pass
 
     return router

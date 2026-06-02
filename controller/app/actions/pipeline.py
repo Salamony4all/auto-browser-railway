@@ -83,7 +83,7 @@ class BrowserActionPipeline:
                 witness_context=witness_context,
             ),
         )
-        before = await manager._light_snapshot(session, label=f"before-{context.action_name}")
+        before = {} if getattr(session, "gateway_attached", False) else await manager._light_snapshot(session, label=f"before-{context.action_name}")
         return ActionWitnessState(
             witness_context=witness_context,
             action_class=action_class,
@@ -227,7 +227,7 @@ class BrowserActionPipeline:
     ) -> dict[str, Any]:
         manager = context.manager
         session = context.session
-        after = await manager._observation_payload(session, limit=20, screenshot_label=f"after-{context.action_name}")
+        after = {} if getattr(session, "gateway_attached", False) else await manager._observation_payload(session, limit=20, screenshot_label=f"after-{context.action_name}")
         session.last_action = context.action_name
         verification = manager._action_verification(context.action_name, context.target, witness_state.before, after)
         action_class = manager._action_class(context.action_name)

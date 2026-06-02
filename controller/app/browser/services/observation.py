@@ -95,7 +95,7 @@ class BrowserObservationService:
         interactables = await session.page.evaluate(INTERACTABLES_SCRIPT, effective_limit)
         text_limit = 4000 if preset == "rich" else 2000
         summary = await self.manager._page_summary(session.page, text_limit=text_limit)
-        ocr = await self.manager.ocr.extract_from_image(screenshot["path"])
+        ocr = None if getattr(session, "gateway_attached", False) else await self.manager.ocr.extract_from_image(screenshot["path"])
         await self._scrub_screenshot_if_needed(session, screenshot, ocr)
         tabs = await self.manager._tab_summaries(session)
         return {
@@ -248,7 +248,7 @@ class BrowserObservationService:
         ocr: dict[str, Any] | None,
     ) -> None:
         pii_scrubber = self.manager.pii_scrubber
-        if not pii_scrubber.screenshot_enabled or not ocr or not ocr.get("blocks"):
+        if not pii_scrubber.screenshot_enabled or not ocr or not ocr.get("blocks") or getattr(session, "gateway_attached", False):
             return
         try:
             scrubbed_path = Path(screenshot["path"])

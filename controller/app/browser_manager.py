@@ -106,6 +106,7 @@ class BrowserSession:
     protection_mode: str = "normal"
     pending_witness_context: dict[str, Any] | None = None
     witness_remote_state: WitnessRemoteState = field(default_factory=WitnessRemoteState)
+    gateway_attached: bool = False
     metadata: dict[str, Any] = field(default_factory=dict)
 
 
