@@ -360,9 +360,13 @@ def create_sessions_router(*, manager: Any) -> APIRouter:
             async with httpx.AsyncClient() as client:
                 resp = await client.get(f"http://{hostname}:9224/cdp-url", timeout=10.0)
                 resp.raise_for_status()
-                cdp_ws_url = resp.text.strip()
-                if not cdp_ws_url:
+                raw_cdp_ws_url = resp.text.strip()
+                if not raw_cdp_ws_url:
                     raise Exception("Empty CDP URL returned")
+                # raw_cdp_ws_url is usually ws://127.0.0.1:9222/... or 0.0.0.0:9222/...
+                # We MUST connect to the browser-node internal hostname, not localhost.
+                parsed_cdp = urllib.parse.urlparse(raw_cdp_ws_url)
+                cdp_ws_url = parsed_cdp._replace(netloc=f"{hostname}:{parsed_cdp.port}").geturl()
         except Exception as e:
             logger.error("Failed to read CDP URL from port 9224: %s", e)
             await websocket.close(code=1011, reason="Failed to get CDP debugger URL")
