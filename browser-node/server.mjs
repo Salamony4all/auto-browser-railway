@@ -59,13 +59,14 @@ try {
 }
 
 import http from 'http';
+import net from 'net';
 
 let globalCdpUrl = "";
 try {
   const cdpRes = await fetch("http://127.0.0.1:9222/json/version");
   const cdpData = await cdpRes.json();
   globalCdpUrl = cdpData.webSocketDebuggerUrl;
-  globalCdpUrl = globalCdpUrl.replace("127.0.0.1", advertisedHost).replace("localhost", advertisedHost);
+  globalCdpUrl = globalCdpUrl.replace("127.0.0.1:9222", advertisedHost + ":9225").replace("localhost:9222", advertisedHost + ":9225");
   console.log(`Fetched CDP URL: ${globalCdpUrl}`);
 } catch (err) {
   console.error("Failed to fetch CDP URL locally:", err);
@@ -82,6 +83,19 @@ const infoServer = http.createServer((req, res) => {
 });
 infoServer.listen(9224, '0.0.0.0', () => {
   console.log('Info server listening on port 9224');
+});
+
+// TCP Proxy for CDP (Playwright forces 127.0.0.1 for port 9222)
+const tcpProxy = net.createServer((clientSocket) => {
+  const targetSocket = net.connect(9222, '127.0.0.1', () => {
+    clientSocket.pipe(targetSocket);
+    targetSocket.pipe(clientSocket);
+  });
+  clientSocket.on('error', (err) => console.error('Client socket error:', err));
+  targetSocket.on('error', (err) => console.error('Target socket error:', err));
+});
+tcpProxy.listen(9225, '0.0.0.0', () => {
+  console.log('TCP proxy for CDP listening on 0.0.0.0:9225');
 });
 
 for (const signal of ["SIGINT", "SIGTERM"]) {
