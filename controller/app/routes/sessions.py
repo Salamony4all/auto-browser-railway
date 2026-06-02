@@ -367,7 +367,7 @@ def create_sessions_router(*, manager: Any) -> APIRouter:
         logger.info("Session %s gateway attached. Proxying to %s", session_id, cdp_ws_url)
 
         try:
-            async with websockets.connect(cdp_ws_url, headers=forward_headers) as backend_ws:
+            async with websockets.connect(cdp_ws_url, extra_headers=forward_headers) as backend_ws:
                 async def client_to_backend():
                     try:
                         while True:
