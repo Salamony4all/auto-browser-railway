@@ -340,6 +340,101 @@ def create_sessions_router(*, manager: Any) -> APIRouter:
         except RuntimeError:
             raise HTTPException(status_code=409, detail="Conflict") from None
 
+    @router.post("/sessions/{session_id}/bulk-fill")
+    async def bulk_fill(session_id: str, payload: dict[str, Any]) -> dict[str, Any]:
+        """
+        Server-side bulk fill: runs the entire fill loop using the
+        already-connected Playwright instance at full CDP speed.
+        Accepts: { blueprint: {row_selector, input_selector, requires_click_to_edit}, items: [{label, value}] }
+        """
+        try:
+            session = await manager.get_session(session_id)
+        except KeyError:
+            raise HTTPException(status_code=404, detail="Unknown session") from None
+
+        blueprint = payload.get("blueprint", {})
+        items = payload.get("items", [])
+
+        row_selector = blueprint.get("row_selector", "")
+        input_selector = blueprint.get("input_selector", "")
+        requires_click = blueprint.get("requires_click_to_edit", False)
+
+        if not row_selector or not input_selector:
+            raise HTTPException(status_code=400, detail="Blueprint must include row_selector and input_selector")
+        if not items:
+            raise HTTPException(status_code=400, detail="Items array is empty")
+
+        page = session.page
+        logs: list[str] = []
+        success_count = 0
+        fail_count = 0
+
+        try:
+            # Count matching rows on the page
+            rows = page.locator(row_selector)
+            row_count = await rows.count()
+            logs.append(f"🔎 Found {row_count} rows matching: {row_selector}")
+
+            if row_count == 0:
+                return {
+                    "success_count": 0,
+                    "fail_count": len(items),
+                    "logs": [f"❌ No rows found for selector: {row_selector}"],
+                }
+
+            for i, item in enumerate(items):
+                label = item.get("label", f"Row {i + 1}")
+                value = item.get("value", "")
+
+                if i >= row_count:
+                    logs.append(f"⚠️ [{i + 1}/{len(items)}] No row {i + 1} on page (only {row_count} rows).")
+                    fail_count += 1
+                    continue
+
+                try:
+                    row = rows.nth(i)
+
+                    if requires_click:
+                        await row.click(timeout=3000)
+                        await asyncio.sleep(0.15)
+
+                    # Find the input inside this row
+                    input_el = row.locator(input_selector).first
+                    input_count = await input_el.count()
+
+                    if input_count == 0:
+                        logs.append(f"⚠️ [{i + 1}/{len(items)}] Input not found in row for: {label}")
+                        fail_count += 1
+                        continue
+
+                    await input_el.scroll_into_view_if_needed(timeout=3000)
+                    await input_el.click(timeout=3000)
+                    await input_el.fill(value, timeout=3000)
+
+                    success_count += 1
+                    logs.append(f"✅ [{i + 1}/{len(items)}] {label} → {value}")
+
+                except Exception as row_err:
+                    fail_count += 1
+                    logs.append(f"⚠️ [{i + 1}/{len(items)}] Failed {label}: {row_err}")
+
+            logs.append(f"✅ Bulk fill done: {success_count} ok, {fail_count} failed out of {len(items)}.")
+
+        except Exception as exc:
+            logger.error("bulk-fill error for session %s: %s", session_id, exc)
+            logs.append(f"❌ Bulk fill aborted: {exc}")
+            return {
+                "success_count": success_count,
+                "fail_count": fail_count or len(items),
+                "logs": logs,
+            }
+
+        return {
+            "success_count": success_count,
+            "fail_count": fail_count,
+            "logs": logs,
+        }
+
     @router.websocket("/sessions/{session_id}/cdp")
     async def connect_raw_cdp_endpoint(websocket: WebSocket, session_id: str, token: str = ""):
         await websocket.accept()
