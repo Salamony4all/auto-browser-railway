@@ -422,6 +422,24 @@ def create_sessions_router(*, manager: Any) -> APIRouter:
                         try:
                             row = rows.nth(i)
 
+                            # Log all input/textarea/select inside the first row to inspect layout structure
+                            if i == 0:
+                                try:
+                                    all_inputs = row.locator("input, textarea, select")
+                                    input_tags = []
+                                    for idx in range(await all_inputs.count()):
+                                        el = all_inputs.nth(idx)
+                                        tag_name = await el.evaluate("el => el.tagName.toLowerCase()")
+                                        type_attr = await el.evaluate("el => el.getAttribute('type') or ''")
+                                        id_attr = await el.evaluate("el => el.getAttribute('id') or ''")
+                                        class_attr = await el.evaluate("el => el.getAttribute('class') or ''")
+                                        name_attr = await el.evaluate("el => el.getAttribute('name') or ''")
+                                        readonly = await el.evaluate("el => el.hasAttribute('readonly')")
+                                        input_tags.append(f"<{tag_name} type='{type_attr}' id='{id_attr}' class='{class_attr}' name='{name_attr}' readonly={readonly}>")
+                                    logs.append(f"🔎 Row 1 inputs info: {', '.join(input_tags)}")
+                                except Exception as log_ex:
+                                    logs.append(f"⚠️ Failed to inspect row inputs: {log_ex}")
+
                             if requires_click:
                                 await row.click(timeout=3000)
                                 await asyncio.sleep(0.15)
