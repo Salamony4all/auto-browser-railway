@@ -439,7 +439,16 @@ def create_sessions_router(*, manager: Any) -> APIRouter:
                             # Try reading value of input fields (like ITEMREFNO or similar)
                             inputs = row.locator("input")
                             for k in range(await inputs.count()):
-                                val = await inputs.nth(k).input_value()
+                                input_el = inputs.nth(k)
+                                # Skip the price/rate input that we are targeted to fill
+                                is_target_input = await input_el.evaluate(
+                                    "(el, sel) => { try { return el.matches(sel) || (!el.readOnly && !el.disabled); } catch(e) { return !el.readOnly && !el.disabled; } }",
+                                    arg=input_selector
+                                )
+                                if is_target_input:
+                                    continue
+                                
+                                val = await input_el.input_value()
                                 if val and val.strip():
                                     ref_value = val.strip()
                                     break
