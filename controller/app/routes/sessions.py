@@ -382,10 +382,24 @@ def create_sessions_router(*, manager: Any) -> APIRouter:
             
             try:
                 async with session.lock:
-                    # Count matching rows on the page
-                    rows = page.locator(row_selector)
+                    target_frame = page
+                    rows = target_frame.locator(row_selector)
                     row_count = await rows.count()
-                    logs.append(f"🔎 Found {row_count} rows matching: {row_selector}")
+
+                    # Self-heal / auto-traverse iframes if target rows are inside an iframe
+                    for frame in page.frames:
+                        try:
+                            frame_rows = frame.locator(row_selector)
+                            count = await frame_rows.count()
+                            if count > row_count:
+                                row_count = count
+                                target_frame = frame
+                                rows = frame_rows
+                        except Exception:
+                            pass
+
+                    frame_name = target_frame.name or target_frame.url.split('/')[-1].split('?')[0] or "main"
+                    logs.append(f"🔎 Found {row_count} rows matching {row_selector!r} in frame: {frame_name}")
                     
                     if row_count == 0:
                         session.metadata["bulk_fill"].update({
@@ -439,6 +453,7 @@ def create_sessions_router(*, manager: Any) -> APIRouter:
                     session.metadata["bulk_fill"]["status"] = "completed"
                     if session.metadata["bulk_fill"]["fail_count"] == len(items):
                         session.metadata["bulk_fill"]["status"] = "failed"
+                        session.metadata["bulk_fill"]["error"] = "All items failed to be filled. Please check selector mapping or portal state."
             except Exception as exc:
                 logger.error("bulk-fill error for session %s: %s", session_id, exc)
                 logs.append(f"❌ Bulk fill aborted: {exc}")
