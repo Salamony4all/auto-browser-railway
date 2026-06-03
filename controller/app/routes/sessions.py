@@ -410,6 +410,25 @@ def create_sessions_router(*, manager: Any) -> APIRouter:
                         logs.append(f"❌ No rows found for selector: {row_selector}")
                         return
 
+                    # Filter rows to only those that contain the input_selector to align index 1-to-1
+                    filtered_rows = []
+                    for idx in range(row_count):
+                        row = rows.nth(idx)
+                        if await row.locator(input_selector).count() > 0:
+                            filtered_rows.append(row)
+                    
+                    row_count = len(filtered_rows)
+                    logs.append(f"🎯 Filtered to {row_count} actual item rows containing selector {input_selector!r}")
+
+                    if row_count == 0:
+                        session.metadata["bulk_fill"].update({
+                            "status": "failed",
+                            "fail_count": len(items),
+                            "error": f"No item rows found containing selector: {input_selector}"
+                        })
+                        logs.append(f"❌ No item rows found containing selector: {input_selector}")
+                        return
+
                     for i, item in enumerate(items):
                         label = item.get("label", f"Row {i + 1}")
                         value = item.get("value", "")
@@ -420,7 +439,7 @@ def create_sessions_router(*, manager: Any) -> APIRouter:
                             continue
 
                         try:
-                            row = rows.nth(i)
+                            row = filtered_rows[i]
 
                             # Log all input/textarea/select inside the first row to inspect layout structure
                             if i == 0:
