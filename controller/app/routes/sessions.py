@@ -456,6 +456,7 @@ def create_sessions_router(*, manager: Any) -> APIRouter:
                             norm_ref = "".join(ref_value.lower().split())
                             page_rows_info.append((norm_ref, row, ref_value))
 
+                    attempted_count = 0
                     for i, item in enumerate(items):
                         label = item.get("label", f"Row {i + 1}")
                         value = item.get("value", "")
@@ -473,20 +474,24 @@ def create_sessions_router(*, manager: Any) -> APIRouter:
                                     break
 
                         if not matched_row:
-                            # Fallback to index-based mapping
-                            if i < row_count:
+                            # Fallback to index-based mapping only if the items chunk size matches page row count
+                            if len(items) == row_count and i < row_count:
                                 matched_row = filtered_rows[i]
                                 logs.append(f"⚠️ BOQ {label!r} fallback to index {i+1}")
                             else:
-                                logs.append(f"❌ BOQ {label!r} not found on page.")
-                                session.metadata["bulk_fill"]["fail_count"] += 1
+                                # If it's not found on the page, and we aren't doing index fallback,
+                                # we just skip it (it's on a different page of the portal)
+                                logs.append(f"⏭️ BOQ {label!r} not found on current page. Skipping.")
                                 continue
+
+                        attempted_count += 1
+                        session.metadata["bulk_fill"]["total_count"] = attempted_count
 
                         try:
                             row = matched_row
 
                             # Log all input/textarea/select inside the first row to inspect layout structure
-                            if i == 0:
+                            if attempted_count == 1:
                                 try:
                                     all_inputs = row.locator("input, textarea, select")
                                     input_tags = []
@@ -540,7 +545,7 @@ def create_sessions_router(*, manager: Any) -> APIRouter:
                                     pass
 
                             if input_count == 0:
-                                logs.append(f"⚠️ [{i + 1}/{len(items)}] Input not found in row for: {label}")
+                                logs.append(f"⚠️ [{attempted_count}] Input not found in row for: {label}")
                                 session.metadata["bulk_fill"]["fail_count"] += 1
                                 continue
 
@@ -549,16 +554,16 @@ def create_sessions_router(*, manager: Any) -> APIRouter:
                             await input_el.fill(value, timeout=3000)
 
                             session.metadata["bulk_fill"]["success_count"] += 1
-                            logs.append(f"✅ [{i + 1}/{len(items)}] {label} → {value}")
+                            logs.append(f"✅ [{attempted_count}] {label} → {value}")
 
                         except Exception as row_err:
                             session.metadata["bulk_fill"]["fail_count"] += 1
-                            logs.append(f"⚠️ [{i + 1}/{len(items)}] Failed {label}: {row_err}")
+                            logs.append(f"⚠️ [{attempted_count}] Failed {label}: {row_err}")
 
                         # Small yield to event loop
                         await asyncio.sleep(0.01)
 
-                    logs.append(f"✅ Bulk fill done: {session.metadata['bulk_fill']['success_count']} ok, {session.metadata['bulk_fill']['fail_count']} failed out of {len(items)}.")
+                    logs.append(f"✅ Bulk fill done: {session.metadata['bulk_fill']['success_count']} ok, {session.metadata['bulk_fill']['fail_count']} failed out of {attempted_count}.")
                     session.metadata["bulk_fill"]["status"] = "completed"
                     if session.metadata["bulk_fill"]["fail_count"] == len(items):
                         session.metadata["bulk_fill"]["status"] = "failed"
