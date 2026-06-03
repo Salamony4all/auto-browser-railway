@@ -4,7 +4,7 @@ import logging
 from typing import Any
 
 import asyncio
-from fastapi import APIRouter, HTTPException, WebSocket, WebSocketDisconnect
+from fastapi import APIRouter, HTTPException, WebSocket, WebSocketDisconnect, BackgroundTasks
 import websockets
 
 from ..approvals import ApprovalRequiredError
@@ -341,11 +341,14 @@ def create_sessions_router(*, manager: Any) -> APIRouter:
             raise HTTPException(status_code=409, detail="Conflict") from None
 
     @router.post("/sessions/{session_id}/bulk-fill")
-    async def bulk_fill(session_id: str, payload: dict[str, Any]) -> dict[str, Any]:
+    async def bulk_fill(
+        session_id: str,
+        payload: dict[str, Any],
+        background_tasks: BackgroundTasks,
+    ) -> dict[str, Any]:
         """
-        Server-side bulk fill: runs the entire fill loop using the
-        already-connected Playwright instance at full CDP speed.
-        Accepts: { blueprint: {row_selector, input_selector, requires_click_to_edit}, items: [{label, value}] }
+        Server-side bulk fill: runs the entire fill loop as a background task
+        using the already-connected Playwright instance.
         """
         try:
             session = await manager.get_session(session_id)
@@ -364,76 +367,88 @@ def create_sessions_router(*, manager: Any) -> APIRouter:
         if not items:
             raise HTTPException(status_code=400, detail="Items array is empty")
 
-        page = session.page
-        logs: list[str] = []
-        success_count = 0
-        fail_count = 0
-
-        try:
-            # Count matching rows on the page
-            rows = page.locator(row_selector)
-            row_count = await rows.count()
-            logs.append(f"🔎 Found {row_count} rows matching: {row_selector}")
-
-            if row_count == 0:
-                return {
-                    "success_count": 0,
-                    "fail_count": len(items),
-                    "logs": [f"❌ No rows found for selector: {row_selector}"],
-                }
-
-            for i, item in enumerate(items):
-                label = item.get("label", f"Row {i + 1}")
-                value = item.get("value", "")
-
-                if i >= row_count:
-                    logs.append(f"⚠️ [{i + 1}/{len(items)}] No row {i + 1} on page (only {row_count} rows).")
-                    fail_count += 1
-                    continue
-
-                try:
-                    row = rows.nth(i)
-
-                    if requires_click:
-                        await row.click(timeout=3000)
-                        await asyncio.sleep(0.15)
-
-                    # Find the input inside this row
-                    input_el = row.locator(input_selector).first
-                    input_count = await input_el.count()
-
-                    if input_count == 0:
-                        logs.append(f"⚠️ [{i + 1}/{len(items)}] Input not found in row for: {label}")
-                        fail_count += 1
-                        continue
-
-                    await input_el.scroll_into_view_if_needed(timeout=3000)
-                    await input_el.click(timeout=3000)
-                    await input_el.fill(value, timeout=3000)
-
-                    success_count += 1
-                    logs.append(f"✅ [{i + 1}/{len(items)}] {label} → {value}")
-
-                except Exception as row_err:
-                    fail_count += 1
-                    logs.append(f"⚠️ [{i + 1}/{len(items)}] Failed {label}: {row_err}")
-
-            logs.append(f"✅ Bulk fill done: {success_count} ok, {fail_count} failed out of {len(items)}.")
-
-        except Exception as exc:
-            logger.error("bulk-fill error for session %s: %s", session_id, exc)
-            logs.append(f"❌ Bulk fill aborted: {exc}")
-            return {
-                "success_count": success_count,
-                "fail_count": fail_count or len(items),
-                "logs": logs,
-            }
-
-        return {
-            "success_count": success_count,
-            "fail_count": fail_count,
-            "logs": logs,
+        # Initialize progress tracker in session metadata
+        session.metadata["bulk_fill"] = {
+            "status": "executing",
+            "logs": ["🚀 Native bulk fill started"],
+            "success_count": 0,
+            "fail_count": 0,
+            "total_count": len(items)
         }
+
+        async def run_fill():
+            page = session.page
+            logs = session.metadata["bulk_fill"]["logs"]
+            
+            try:
+                async with session.lock:
+                    # Count matching rows on the page
+                    rows = page.locator(row_selector)
+                    row_count = await rows.count()
+                    logs.append(f"🔎 Found {row_count} rows matching: {row_selector}")
+                    
+                    if row_count == 0:
+                        session.metadata["bulk_fill"].update({
+                            "status": "failed",
+                            "fail_count": len(items),
+                            "error": f"No rows found for selector: {row_selector}"
+                        })
+                        logs.append(f"❌ No rows found for selector: {row_selector}")
+                        return
+
+                    for i, item in enumerate(items):
+                        label = item.get("label", f"Row {i + 1}")
+                        value = item.get("value", "")
+
+                        if i >= row_count:
+                            logs.append(f"⚠️ [{i + 1}/{len(items)}] No row {i + 1} on page (only {row_count} rows).")
+                            session.metadata["bulk_fill"]["fail_count"] += 1
+                            continue
+
+                        try:
+                            row = rows.nth(i)
+
+                            if requires_click:
+                                await row.click(timeout=3000)
+                                await asyncio.sleep(0.15)
+
+                            # Find the input inside this row
+                            input_el = row.locator(input_selector).first
+                            input_count = await input_el.count()
+
+                            if input_count == 0:
+                                logs.append(f"⚠️ [{i + 1}/{len(items)}] Input not found in row for: {label}")
+                                session.metadata["bulk_fill"]["fail_count"] += 1
+                                continue
+
+                            await input_el.scroll_into_view_if_needed(timeout=3000)
+                            await input_el.click(timeout=3000)
+                            await input_el.fill(value, timeout=3000)
+
+                            session.metadata["bulk_fill"]["success_count"] += 1
+                            logs.append(f"✅ [{i + 1}/{len(items)}] {label} → {value}")
+
+                        except Exception as row_err:
+                            session.metadata["bulk_fill"]["fail_count"] += 1
+                            logs.append(f"⚠️ [{i + 1}/{len(items)}] Failed {label}: {row_err}")
+
+                        # Small yield to event loop
+                        await asyncio.sleep(0.01)
+
+                    logs.append(f"✅ Bulk fill done: {session.metadata['bulk_fill']['success_count']} ok, {session.metadata['bulk_fill']['fail_count']} failed out of {len(items)}.")
+                    session.metadata["bulk_fill"]["status"] = "completed"
+                    if session.metadata["bulk_fill"]["fail_count"] == len(items):
+                        session.metadata["bulk_fill"]["status"] = "failed"
+            except Exception as exc:
+                logger.error("bulk-fill error for session %s: %s", session_id, exc)
+                logs.append(f"❌ Bulk fill aborted: {exc}")
+                session.metadata["bulk_fill"].update({
+                    "status": "failed",
+                    "error": str(exc)
+                })
+
+        background_tasks.add_task(run_fill)
+        return {"status": "started", "message": "Bulk fill job started in background."}
 
     @router.websocket("/sessions/{session_id}/cdp")
     async def connect_raw_cdp_endpoint(websocket: WebSocket, session_id: str, token: str = ""):

@@ -409,6 +409,7 @@ class BrowserSessionService:
             "proxy_persona": session.proxy_persona,
             "protection_mode": session.protection_mode,
             "witness_remote": session.witness_remote_state.model_dump(),
+            "metadata": session.metadata,
         }
 
     async def get_summary(self, session_id: str) -> dict[str, Any]:
