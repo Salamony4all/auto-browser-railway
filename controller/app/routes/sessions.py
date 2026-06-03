@@ -357,6 +357,7 @@ def create_sessions_router(*, manager: Any) -> APIRouter:
 
         blueprint = payload.get("blueprint", {})
         items = payload.get("items", [])
+        global_fields = payload.get("global_fields", [])
 
         row_selector = blueprint.get("row_selector", "")
         input_selector = blueprint.get("input_selector", "")
@@ -428,6 +429,53 @@ def create_sessions_router(*, manager: Any) -> APIRouter:
                         })
                         logs.append(f"❌ No item rows found containing selector: {input_selector}")
                         return
+
+                    # Map global fields to column indices
+                    import re
+                    global_field_mappings = {} # maps field_name to col_index
+                    if global_fields:
+                        headers_locator = target_frame.locator("th")
+                        headers_count = await headers_locator.count()
+                        headers_text = []
+                        for h_idx in range(headers_count):
+                            h_text = await headers_locator.nth(h_idx).inner_text()
+                            headers_text.append(h_text.strip())
+                            
+                        logs.append(f"📋 Found table headers: {headers_text}")
+                        
+                        if not headers_text:
+                            try:
+                                first_row = target_frame.locator("tr").first
+                                cells = first_row.locator("td")
+                                for c_idx in range(await cells.count()):
+                                    h_text = await cells.nth(c_idx).inner_text()
+                                    headers_text.append(h_text.strip())
+                                logs.append(f"📋 Fallback table headers: {headers_text}")
+                            except Exception:
+                                pass
+                                
+                        for gf in global_fields:
+                            gf_name = gf.get("name", "")
+                            gf_value = gf.get("value", "")
+                            if not gf_name or not gf_value:
+                                continue
+                                
+                            norm_gf = re.sub(r'[*•\s]', '', gf_name.lower())
+                            matched_col_idx = -1
+                            for col_idx, h_text in enumerate(headers_text):
+                                norm_h = re.sub(r'[*•\s]', '', h_text.lower())
+                                if norm_gf in norm_h or norm_h in norm_gf:
+                                    matched_col_idx = col_idx
+                                    break
+                                    
+                            if matched_col_idx != -1:
+                                global_field_mappings[gf_name] = {
+                                    "col_index": matched_col_idx,
+                                    "value": gf_value
+                                }
+                                logs.append(f"🎯 Mapped global field {gf_name!r} to Column {matched_col_idx + 1} ({headers_text[matched_col_idx]!r})")
+                            else:
+                                logs.append(f"⚠️ Could not map global field {gf_name!r} to any table header.")
 
                     # Helper function to match codes strictly
                     import re
@@ -614,6 +662,22 @@ def create_sessions_router(*, manager: Any) -> APIRouter:
                             await input_el.scroll_into_view_if_needed(timeout=3000)
                             await input_el.click(timeout=3000)
                             await input_el.fill(value, timeout=3000)
+
+                            # Fill global fields for this row
+                            for gf_name, mapping in global_field_mappings.items():
+                                col_idx = mapping["col_index"]
+                                val = mapping["value"]
+                                
+                                cells = row.locator("td")
+                                if col_idx < await cells.count():
+                                    cell = cells.nth(col_idx)
+                                    gf_input = cell.locator("input:not([readonly]):not([disabled]), textarea:not([readonly]):not([disabled]), select:not([readonly]):not([disabled])").first
+                                    if await gf_input.count() > 0:
+                                        await gf_input.scroll_into_view_if_needed(timeout=2000)
+                                        await gf_input.click(timeout=2000)
+                                        await gf_input.fill(val, timeout=2000)
+                                    else:
+                                        logs.append(f"   ⚠️ No editable input found in Column {col_idx + 1} for {gf_name!r}")
 
                             session.metadata["bulk_fill"]["success_count"] += 1
                             logs.append(f"✅ [{attempted_count}] {label} → {value}")
