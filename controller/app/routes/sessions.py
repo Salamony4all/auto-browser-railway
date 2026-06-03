@@ -429,17 +429,61 @@ def create_sessions_router(*, manager: Any) -> APIRouter:
                         logs.append(f"❌ No item rows found containing selector: {input_selector}")
                         return
 
+                    # Build list of normalized references from page rows to anchor by item code/description
+                    page_rows_info = []
+                    for idx in range(row_count):
+                        row = filtered_rows[idx]
+                        ref_value = ""
+                        
+                        try:
+                            # Try reading value of input fields (like ITEMREFNO or similar)
+                            inputs = row.locator("input")
+                            for k in range(await inputs.count()):
+                                val = await inputs.nth(k).input_value()
+                                if val and val.strip():
+                                    ref_value = val.strip()
+                                    break
+                        except Exception:
+                            pass
+                            
+                        if not ref_value:
+                            try:
+                                ref_value = await row.inner_text()
+                            except Exception:
+                                pass
+                                
+                        if ref_value:
+                            norm_ref = "".join(ref_value.lower().split())
+                            page_rows_info.append((norm_ref, row, ref_value))
+
                     for i, item in enumerate(items):
                         label = item.get("label", f"Row {i + 1}")
                         value = item.get("value", "")
 
-                        if i >= row_count:
-                            logs.append(f"⚠️ [{i + 1}/{len(items)}] No row {i + 1} on page (only {row_count} rows).")
-                            session.metadata["bulk_fill"]["fail_count"] += 1
-                            continue
+                        # Attempt to anchor BOQ item to the correct row on the page by serial number/code matching
+                        matched_row = None
+                        norm_label = "".join(label.lower().split())
+                        
+                        if norm_label:
+                            for norm_ref, r, orig_ref in page_rows_info:
+                                # Match if either contains the other (e.g. "1.1" vs "Bill No 1.1")
+                                if norm_label in norm_ref or norm_ref in norm_label:
+                                    matched_row = r
+                                    logs.append(f"🎯 BOQ {label!r} -> Row {i+1} ({orig_ref!r})")
+                                    break
+
+                        if not matched_row:
+                            # Fallback to index-based mapping
+                            if i < row_count:
+                                matched_row = filtered_rows[i]
+                                logs.append(f"⚠️ BOQ {label!r} fallback to index {i+1}")
+                            else:
+                                logs.append(f"❌ BOQ {label!r} not found on page.")
+                                session.metadata["bulk_fill"]["fail_count"] += 1
+                                continue
 
                         try:
-                            row = filtered_rows[i]
+                            row = matched_row
 
                             # Log all input/textarea/select inside the first row to inspect layout structure
                             if i == 0:
