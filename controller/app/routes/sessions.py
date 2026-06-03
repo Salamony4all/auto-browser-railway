@@ -448,6 +448,17 @@ def create_sessions_router(*, manager: Any) -> APIRouter:
                             input_el = row.locator(input_selector).first
                             input_count = await input_el.count()
 
+                            if input_count > 0:
+                                try:
+                                    is_readonly = await input_el.evaluate("el => el.hasAttribute('readonly') or el.readOnly")
+                                    if is_readonly:
+                                        editable_inputs = row.locator("input:not([readonly]):not([disabled]), textarea:not([readonly]):not([disabled])")
+                                        if await editable_inputs.count() > 0:
+                                            input_el = editable_inputs.first
+                                            logs.append(f"🔄 Self-healed: targeted element was readonly, switched to editable input in row {i+1}")
+                                except Exception:
+                                    pass
+
                             if input_count == 0:
                                 logs.append(f"⚠️ [{i + 1}/{len(items)}] Input not found in row for: {label}")
                                 session.metadata["bulk_fill"]["fail_count"] += 1
