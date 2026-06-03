@@ -1230,6 +1230,7 @@ class BrowserManager:
             },
         ))
         page.on("download", lambda download: asyncio.create_task(self._handle_download(session, download)))
+        page.on("dialog", lambda dialog: asyncio.create_task(self._handle_dialog(session, dialog)))
 
     def _bounded_append(self, items: list[Any], value: Any, limit: int = 50) -> None:
         items.append(value)
@@ -1238,6 +1239,20 @@ class BrowserManager:
 
     async def _handle_download(self, session: BrowserSession, download: Any) -> None:
         return await self.diagnostics.handle_download(session, download)
+
+    async def _handle_dialog(self, session: BrowserSession, dialog: Any) -> None:
+        message = dialog.message
+        dialog_type = dialog.type
+        logger.info("Dialog popped up in session %s: %s - %s. Auto-accepting.", session.id, dialog_type, message)
+        
+        # Log to bulk fill logs if active
+        if "bulk_fill" in session.metadata and "logs" in session.metadata["bulk_fill"]:
+            session.metadata["bulk_fill"]["logs"].append(f"💬 Dialog: {message} -> Auto-Accepted ✅")
+            
+        try:
+            await dialog.accept()
+        except Exception as e:
+            logger.warning("Failed to accept dialog in session %s: %s", session.id, e)
 
     async def _append_jsonl(self, path: Path, payload: dict[str, Any]) -> None:
         await self.artifacts.append_jsonl(path, payload)
