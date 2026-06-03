@@ -429,6 +429,47 @@ def create_sessions_router(*, manager: Any) -> APIRouter:
                         logs.append(f"❌ No item rows found containing selector: {input_selector}")
                         return
 
+                    # Helper function to match codes strictly
+                    import re
+                    def is_code_match(label: str, ref: str) -> bool:
+                        norm_label = "".join(label.lower().split())
+                        norm_ref = "".join(ref.lower().split())
+                        
+                        if not norm_label or not norm_ref:
+                            return False
+                            
+                        if norm_label == norm_ref:
+                            return True
+                            
+                        # Extract structured serial number codes (e.g. "1.3", "1.3.2", "1-2")
+                        label_codes = re.findall(r'\d+(?:[\.-]\d+)+', label)
+                        ref_codes = re.findall(r'\d+(?:[\.-]\d+)+', ref)
+                        
+                        if label_codes and ref_codes:
+                            for l_code in label_codes:
+                                if l_code in ref_codes:
+                                    return True
+                            return False
+                            
+                        # Fallback: substring match with strict digit/dot boundary checks
+                        idx = norm_ref.find(norm_label)
+                        while idx != -1:
+                            before_ok = True
+                            if idx > 0:
+                                char_before = norm_ref[idx - 1]
+                                if char_before.isdigit() or char_before in '.-':
+                                    before_ok = False
+                            after_ok = True
+                            if idx + len(norm_label) < len(norm_ref):
+                                char_after = norm_ref[idx + len(norm_label)]
+                                if char_after.isdigit() or char_after in '.-':
+                                    after_ok = False
+                                    
+                            if before_ok and after_ok:
+                                return True
+                            idx = norm_ref.find(norm_label, idx + 1)
+                        return False
+
                     # Build list of normalized references from page rows to anchor by item code/description
                     page_rows_info = []
                     for idx in range(row_count):
@@ -457,13 +498,28 @@ def create_sessions_router(*, manager: Any) -> APIRouter:
                             
                         if not ref_value:
                             try:
+                                # Get all td text cells and join them, skipping the first one if it's just the row index
+                                cells = row.locator("td")
+                                cell_texts = []
+                                for c_idx in range(await cells.count()):
+                                    cell_text = await cells.nth(c_idx).inner_text()
+                                    cell_texts.append(cell_text.strip())
+                                if cell_texts:
+                                    if cell_texts[0].isdigit():
+                                        ref_value = " ".join(cell_texts[1:])
+                                    else:
+                                        ref_value = " ".join(cell_texts)
+                            except Exception:
+                                pass
+
+                        if not ref_value:
+                            try:
                                 ref_value = await row.inner_text()
                             except Exception:
                                 pass
                                 
                         if ref_value:
-                            norm_ref = "".join(ref_value.lower().split())
-                            page_rows_info.append((norm_ref, row, ref_value))
+                            page_rows_info.append((row, ref_value))
 
                     attempted_count = 0
                     for i, item in enumerate(items):
@@ -472,15 +528,12 @@ def create_sessions_router(*, manager: Any) -> APIRouter:
 
                         # Attempt to anchor BOQ item to the correct row on the page by serial number/code matching
                         matched_row = None
-                        norm_label = "".join(label.lower().split())
                         
-                        if norm_label:
-                            for norm_ref, r, orig_ref in page_rows_info:
-                                # Match if either contains the other (e.g. "1.1" vs "Bill No 1.1")
-                                if norm_label in norm_ref or norm_ref in norm_label:
-                                    matched_row = r
-                                    logs.append(f"🎯 BOQ {label!r} -> Row {i+1} ({orig_ref!r})")
-                                    break
+                        for r, orig_ref in page_rows_info:
+                            if is_code_match(label, orig_ref):
+                                matched_row = r
+                                logs.append(f"🎯 BOQ {label!r} -> Row {i+1} ({orig_ref.strip()[:40]}...)")
+                                break
 
                         if not matched_row:
                             # Fallback to index-based mapping only if the items chunk size matches page row count
