@@ -452,6 +452,23 @@ def create_sessions_router(*, manager: Any) -> APIRouter:
                                 try:
                                     is_readonly = await input_el.evaluate("el => el.hasAttribute('readonly') or el.readOnly")
                                     if is_readonly:
+                                        # Log all inputs in this row to inspect
+                                        try:
+                                            all_inputs = row.locator("input, textarea, select")
+                                            input_tags = []
+                                            for idx in range(await all_inputs.count()):
+                                                el = all_inputs.nth(idx)
+                                                tag_name = await el.evaluate("el => el.tagName.toLowerCase()")
+                                                type_attr = await el.evaluate("el => el.getAttribute('type') or ''")
+                                                id_attr = await el.evaluate("el => el.getAttribute('id') or ''")
+                                                class_attr = await el.evaluate("el => el.getAttribute('class') or ''")
+                                                name_attr = await el.evaluate("el => el.getAttribute('name') or ''")
+                                                readonly = await el.evaluate("el => el.hasAttribute('readonly') or el.readOnly")
+                                                input_tags.append(f"<{tag_name} type='{type_attr}' id='{id_attr}' class='{class_attr}' name='{name_attr}' readonly={readonly}>")
+                                            logs.append(f"🔎 Row {i+1} inputs: {', '.join(input_tags)}")
+                                        except Exception as log_err:
+                                            logs.append(f"⚠️ Failed to log row inputs: {log_err}")
+
                                         editable_inputs = row.locator("input:not([readonly]):not([disabled]), textarea:not([readonly]):not([disabled])")
                                         if await editable_inputs.count() > 0:
                                             input_el = editable_inputs.first
